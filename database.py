@@ -1,4 +1,5 @@
-from pony.orm import db_session, set_sql_debug, Database, PrimaryKey, Required, select, TransactionIntegrityError
+from pony.orm import db_session, set_sql_debug, Database, PrimaryKey,\
+    Required, select, TransactionIntegrityError
 
 set_sql_debug(False)
 db = Database()
@@ -11,11 +12,11 @@ class User(db.Entity):
 
 
 class Show(db.Entity):
-    show_id = PrimaryKey(int, auto=True)
-    show_title = Required(str, unique=True)
-    show_airing_day = Required(str)
-    show_airing_time = Required(str)
-    show_link = Required(str)
+    show_id = PrimaryKey(int)
+    title = Required(str, unique=True)
+    link = Required(str, unique=True)
+    airing_day = Required(str)
+    airing_time = Required(str)
 
 
 class Subscription(db.Entity):
@@ -41,7 +42,7 @@ def insert_user(userid: int, username: str, firstname: str):
 
 
 @db_session
-def insert_show(title: str, airday: str, airtime: str, link: str):
+def insert_show(hs_id: int, title: str, airday: str, airtime: str, link: str):
     """
     Inserts a show into the database
     :param title:
@@ -50,7 +51,8 @@ def insert_show(title: str, airday: str, airtime: str, link: str):
     :param link:
     :return:
     """
-    Show(show_title=title, show_airing_day=airday, show_airing_time=airtime, show_link=link)
+    Show(show_id=hs_id, title=title, link=link,
+         airing_day=airday, airing_time=airtime)
 
 
 @db_session
@@ -73,7 +75,7 @@ def remove_subscription(userid: int, showid: int):
     :param showid:
     :return:
     """
-    select(sub for sub in Subscription if sub.ext_user_id == userid and sub.ext_show_id == showid)[:][0].delete()
+    Subscription[userid, showid].delete()
 
 
 @db_session
@@ -83,17 +85,18 @@ def get_username_by_userid(userid: int):
     :param userid:
     :return:
     """
-    return select(u.tgusername for u in User if u.tguser_id == userid)[:][0]
+    return User[userid].tgusername
 
 
 @db_session
 def get_show_id_by_name(title: str):
     """
-    Returns the show's auto-incremented internal id by its title
+    Returns the show's id by its title
     :param title:
     :return:
     """
-    return select(s.show_id for s in Show if s.show_title == title)[:][0]
+    show = Show.get(title=title)
+    return show.show_id if show else None
 
 
 @db_session
@@ -103,7 +106,8 @@ def get_show_link_by_name(title: str):
     :param title:
     :return:
     """
-    return select(s.show_link for s in Show if s.show_title == title)[:][0]
+    show = Show.get(title=title)
+    return show.link if show else None
 
 
 @db_session
@@ -114,10 +118,7 @@ def check_subscribed(userid: int, showid: int):
     :param showid:
     :return:
     """
-    if len(select(sub for sub in Subscription if sub.ext_user_id == userid and sub.ext_show_id == showid)[:]) > 0:
-        return True
-    else:
-        return False
+    return Subscription.get(ext_user_id=userid, ext_show_id=showid) is not None
 
 
 @db_session
@@ -127,10 +128,7 @@ def check_user_exists(userid: int):
     :param userid:
     :return:
     """
-    if len(select(u for u in User if userid == u.tguser_id)[:]) > 0:
-        return True
-    else:
-        return False
+    return User.get(tguser_id=userid) is not None
 
 
 @db_session
@@ -170,12 +168,16 @@ def delete_data():
 @db_session
 def list_all_shows():
     """
-    Returns a list of all shows currently in the database
+    Returns a set of all shows currently in the database
     :return:
     """
-    return select(s.show_title for s in Show).order_by(lambda: s.show_id)[:]
+    return set(select(s.title for s in Show)[:])
 
 
-__all__ = ['insert_show', 'insert_user', 'check_user_exists', 'get_show_id_by_name', 'check_subscribed',
-           'insert_subscription', 'remove_subscription', 'return_users_subbed', 'TransactionIntegrityError',
-           'delete_data', 'return_all_users', 'list_all_shows', 'get_show_link_by_name', 'get_username_by_userid']
+__all__ = [
+    'insert_show', 'insert_user', 'check_user_exists', 'get_show_id_by_name',
+    'check_subscribed', 'insert_subscription', 'remove_subscription',
+    'return_users_subbed', 'TransactionIntegrityError', 'delete_data',
+    'return_all_users', 'list_all_shows', 'get_show_link_by_name',
+    'get_username_by_userid'
+]

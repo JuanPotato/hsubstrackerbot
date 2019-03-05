@@ -1,6 +1,6 @@
 pony
 requests
-requests-html
+bs4
 lxml
 python-telegram-bot
 pytz

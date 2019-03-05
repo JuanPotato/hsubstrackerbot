@@ -8,7 +8,11 @@ from json import load
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton, Bot, parsemode
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler
 from hsubs import ScheduleGenerator, check_show_up, get_show_ep_magnet
-from database import *
+from database import insert_show, insert_user, check_user_exists, \
+    get_show_id_by_name, check_subscribed, insert_subscription, \
+    remove_subscription, return_users_subbed, TransactionIntegrityError, \
+    get_username_by_userid
+# get_show_link_by_name, list_all_shows, return_all_users, delete_data
 
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -28,7 +32,7 @@ def show_insert_loop(schedule: ScheduleGenerator):
     """
     for show in schedule.iter_schedule():
         try:
-            insert_show(show.title, show.day, show.time, show.link)
+            insert_show(show.id, show.title, show.day, show.time, show.link)
         except TransactionIntegrityError:
             pass
 
@@ -51,7 +55,8 @@ def build_button_list(days=False, show=False, rtitle=None, gen_whichday=None, u_
                                                      f' @ {show.time} PST',
                                                      callback_data=show.title)])
             else:
-                buttons.append([InlineKeyboardButton(f'{show.title} @ {show.time} PST', callback_data=show.title)])
+                buttons.append([InlineKeyboardButton(
+                    f'{show.title} @ {show.time} PST', callback_data=show.title)])
 
         buttons.append(backbutton)
         return InlineKeyboardMarkup(buttons)
@@ -80,12 +85,14 @@ def handle_button_press(bot, update):
     elif 'back' in callback_query:
         bot.editMessageText(text=config['en_gb']['pick_day'],
                             chat_id=cht_id, message_id=msg_id)
-        bot.editMessageReplyMarkup(chat_id=cht_id, message_id=msg_id, reply_markup=build_button_list(days=True))
+        bot.editMessageReplyMarkup(
+            chat_id=cht_id, message_id=msg_id, reply_markup=build_button_list(days=True))
         bot.answerCallbackQuery(callback_query_id=cbq_id)
 
     else:
         if check_subscribed(cht_id, get_show_id_by_name(callback_query)):
-            day_context = update.callback_query.message.text.split(' ')[5]  # what a hack
+            day_context = update.callback_query.message.text.split(' ')[
+                5]  # what a hack
             remove_subscription(cht_id, get_show_id_by_name(callback_query))
             bot.editMessageReplyMarkup(chat_id=cht_id, message_id=msg_id,
                                        reply_markup=build_button_list(show=True, gen_whichday=day_context,
@@ -100,6 +107,10 @@ def handle_button_press(bot, update):
                                                                       rtitle=callback_query, u_id=cht_id))
             bot.answerCallbackQuery(callback_query_id=cbq_id)
 
+
+def test_command(bot, update):
+    text = get_show_id_by_name('Detetive Conan')
+    bot.sendMessage(chat_id=update.message.chat_id, text=text)
 
 def start_command(bot, update):
     if update.message.chat.type == 'private':
@@ -117,7 +128,8 @@ def start_command(bot, update):
             insert_user(userid, username, firstname)
 
     else:
-        bot.sendMessage(chat_id=update.message.chat_id, text=config['en_gb']['pm_only'])
+        bot.sendMessage(chat_id=update.message.chat_id,
+                        text=config['en_gb']['pm_only'])
 
 
 def calc_time(bot_inst):
@@ -146,7 +158,8 @@ def calc_time(bot_inst):
 
         else:
             logger.info(f'{show.title}, upcoming in {final_td} seconds.')
-            notif_timer = Timer(final_td + notif_offset, send_notif, [bot_inst, show.title])
+            notif_timer = Timer(final_td + notif_offset,
+                                send_notif, [bot_inst, show.title])
             logger.debug(notif_timer)
             notif_timer.start()
 
@@ -157,14 +170,18 @@ def calc_time(bot_inst):
         day = -1
 
     day_tomorrow = day + 1
-    ls_td = timedelta(days=day, hours=showtime.tm_hour, minutes=showtime.tm_min)
+    ls_td = timedelta(days=day, hours=showtime.tm_hour,
+                      minutes=showtime.tm_min)
 
     for t_show in sc.iter_schedule(sc.days[day_tomorrow]):
         t_showtime = strptime(t_show.time, '%H:%M')
-        t_show_td = timedelta(days=day_tomorrow, hours=t_showtime.tm_hour, minutes=t_showtime.tm_min)
+        t_show_td = timedelta(
+            days=day_tomorrow, hours=t_showtime.tm_hour, minutes=t_showtime.tm_min)
         fut_td = int((t_show_td - ls_td).total_seconds())
-        logger.info(f'Last show today: {show.title}, first show tomorrow: {t_show.title}')
-        logger.info(f'Total amount of time to wait until tomorrow: {final_td + fut_td}')
+        logger.info(
+            f'Last show today: {show.title}, first show tomorrow: {t_show.title}')
+        logger.info(
+            f'Total amount of time to wait until tomorrow: {final_td + fut_td}')
         calc_timer = Timer((final_td + fut_td) - 60, calc_time, [bot_inst])
         calc_timer.start()
         break
@@ -176,10 +193,13 @@ def send_notif(bot, show_title):
     for user in return_users_subbed(get_show_id_by_name(show_title)):
         try:
             with Pool(processes=2) as pool:
-                show_up_res = pool.apply_async(check_show_up, (show_title,)).get(timeout=30)
-                logger.info(f'{show_title} - result from check_show_up: {show_up_res}')
+                show_up_res = pool.apply_async(
+                    check_show_up, (show_title,)).get(timeout=30)
+                logger.info(
+                    f'{show_title} - result from check_show_up: {show_up_res}')
                 if show_up_res:
-                    info = pool.apply_async(get_show_ep_magnet, (show_title,)).get(timeout=30)
+                    info = pool.apply_async(
+                        get_show_ep_magnet, (show_title,)).get(timeout=30)
                     bot.sendMessage(chat_id=user,
                                     text=f'Hello, @{get_username_by_userid(user)}!\n'
                                     f'{show_title} - {info[0]} is out!\n'
@@ -203,6 +223,7 @@ def main():
 
     dp = updater.dispatcher
     dp.add_handler(CommandHandler("start", start_command))
+    dp.add_handler(CommandHandler("test", test_command))
     dp.add_handler(CallbackQueryHandler(handle_button_press))
 
     updater.start_polling()

@@ -1,10 +1,11 @@
 from json import load
 from collections import namedtuple
-from lxml import html
-from requests_html import HTMLSession
-from database import list_all_shows, delete_data, get_show_link_by_name
+from database import list_all_shows, delete_data, get_show_id_by_name
 import requests
 import logging
+import re
+
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
@@ -17,11 +18,11 @@ class ScheduleGenerator:
     def __init__(self):
         self.config = load(open('config.json', 'r'))
         self.days = self.config['en_gb']['day_array']
-        self.show = namedtuple('Show', ['day', 'title', 'time', 'link'])
+        self.show = namedtuple('Show', ['id', 'day', 'title', 'time', 'link'])
         self.schedulelink = 'https://horriblesubs.info/release-schedule/'
         self.baselink = 'https://horriblesubs.info'
         self.req = requests.get(self.schedulelink)
-        self.tree = html.fromstring(self.req.text)
+        self.tree = BeautifulSoup(self.req.text, 'lxml')
         self.id = 0
 
     def iter_schedule(self, days=None):
@@ -30,25 +31,33 @@ class ScheduleGenerator:
         elif not isinstance(days, (list, tuple)):
             days = [days]
 
+        tables = self.tree.select('#main > div > article > div > table')
+
         for day in days:
             # tables start from 1 rather than from 0, 1 day = 1 table
-            dayindex = self.days.index(day) + 1
-            expr_str = f'//*[@id="post-63"]/div/table[{dayindex}]'
-            table = self.tree.xpath(expr_str)[0].getchildren()
+            dayindex = self.days.index(day)
+            rows = tables[dayindex].find_all('tr', recursive=False)
 
-            for item in table:
-                title = item.getchildren()[0].getchildren()[0].text
-                time = item.getchildren()[1].text
-                link = f'{self.baselink}{item.getchildren()[0].getchildren()[0].attrib["href"]}'
-                yield self.show(day, title, time, link)
+            for item in rows:
+                title = item.a.text
+                time = item('td')[1].text
+                link = f'{self.baselink}{item.a["href"]}'
+
+                show_id = get_show_id_by_name(title)
+
+                if show_id is None:
+                    page = requests.get(link).text
+                    show_id = re.search(r'var hs_showid = (\d+);', page).group(1)
+
+                yield self.show(show_id, day, title, time, link)
 
     def update_schedule(self):
         self.req = requests.get(self.schedulelink)
-        self.tree = html.fromstring(self.req.text)
+        self.tree = BeautifulSoup(self.req.text, 'lxml')
         self.id += 1
-        showlist = []
-        [showlist.append(show.title) for show in self.iter_schedule()]
-        if showlist == list_all_shows():
+        showlist = {show.title for show in self.iter_schedule()}
+        all_shows = list_all_shows()
+        if showlist == all_shows:
             logger.info(f"Update successful, id: {self.id}")
             return True
         else:
@@ -58,8 +67,8 @@ class ScheduleGenerator:
 
     @staticmethod
     def shorten_magnet(magnet_link):
-        r = requests.get(f'http://mgnet.me/api/create?m={magnet_link}')
-        return r.json().get('shorturl')
+        url = f'http://mgnet.me/api/create?m={magnet_link}'
+        return requests.get(url).json()['shorturl']
 
     def pretty_print(self):
         for day in self.days:
@@ -71,22 +80,24 @@ class ScheduleGenerator:
 
 
 def check_show_up(show_title):
-    session = HTMLSession()
-    r = session.get('https://horriblesubs.info')
-    r.html.render()
-    if show_title.replace('–', '-') in r.html.html:
+    url = 'https://horriblesubs.info/api.php?method=getlatest'
+    page = requests.get(url)
+
+    if show_title.replace('–', '-') in page.text:
         return True
     else:
         return False
 
 
 def get_show_ep_magnet(show_title):
-    session = HTMLSession()
-    r = session.get(get_show_link_by_name(show_title))
-    r.html.render()
-    episode = r.html.find('a.rls-label')
-    magnets = r.html.find('span.dl-type.hs-magnet-link')
-    episode = episode[0].text.split(' ')[-2]
-    magnet720 = magnets[1].absolute_links.pop()
-    magnet1080 = magnets[2].absolute_links.pop()
+    show_id = get_show_id_by_name(show_title)
+
+    url = f'https://horriblesubs.info/api.php?method=getshows&type=show&showid={show_id}'
+    page = requests.get(url)
+    soup = BeautifulSoup(page.text, 'lxml')
+
+    episode = soup.select('a.rls-label > strong')[0].text
+    magnets = soup.select('span.hs-magnet-link > a')
+    magnet720 = magnets[1]['href']
+    magnet1080 = magnets[2]['href']
     return episode, magnet720, magnet1080
